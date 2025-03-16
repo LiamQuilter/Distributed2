@@ -233,29 +233,47 @@ public class MapReduceFiles {
         }
       };
 
-      List<Thread> reduceCluster = new ArrayList<Thread>(groupedItems.size());
+      // Group words into chunks for threads
+      List<Map.Entry<String, List<String>>> groupedEntries = new ArrayList<>(groupedItems.entrySet());
+      List<List<Map.Entry<String, List<String>>>> reduceChunks = new ArrayList<>();
+      int chunkSize = 0;
+      List<Map.Entry<String, List<String>>> currentChunk = new ArrayList<>();
 
-      Iterator<Map.Entry<String, List<String>>> groupedIter = groupedItems.entrySet().iterator();
-      while(groupedIter.hasNext()) {
-        Map.Entry<String, List<String>> entry = groupedIter.next();
-        final String word = entry.getKey();
-        final List<String> list = entry.getValue();
+      for (Map.Entry<String, List<String>> entry : groupedEntries) {
+        currentChunk.add(entry);
+        chunkSize++;
+        if (chunkSize >= 1000) { // Maximum chunk size
+          reduceChunks.add(currentChunk);
+          currentChunk = new ArrayList<>();
+          chunkSize = 0;
+        }
+      }
+      if (!currentChunk.isEmpty()) {
+        reduceChunks.add(currentChunk);
+      }
 
+      // Create threads for each chunk
+      List<Thread> reduceCluster = new ArrayList<>(reduceChunks.size());
+      for (List<Map.Entry<String, List<String>>> chunk : reduceChunks) {
         Thread t = new Thread(new Runnable() {
           @Override
           public void run() {
-            reduce(word, list, reduceCallback);
+            for (Map.Entry<String, List<String>> entry : chunk) {
+              String word = entry.getKey();
+              List<String> list = entry.getValue();
+              reduce(word, list, reduceCallback);
+            }
           }
         });
         reduceCluster.add(t);
         t.start();
       }
 
-      // wait for reducing phase to be over:
-      for(Thread t : reduceCluster) {
+      // Wait for reducing phase to be over
+      for (Thread t : reduceCluster) {
         try {
           t.join();
-        } catch(InterruptedException e) {
+        } catch (InterruptedException e) {
           throw new RuntimeException(e);
         }
       }
